@@ -679,28 +679,6 @@ def provider_tianchi(topic: str, limit: int) -> list[DatasetCandidate]:
     return results
 
 
-def fetch_external_ai_recommendations(provider_name: str, topic: str) -> list[str]:
-    secrets_key = f"{provider_name.lower()}_proxy"
-    env_key = f"DATAVET_{provider_name.upper()}_PROXY"
-    endpoint = ""
-
-    try:
-        endpoint = str(st.secrets.get(secrets_key, ""))
-    except Exception:
-        endpoint = ""
-
-    endpoint = endpoint or os.environ.get(env_key, "")
-    endpoint = endpoint.strip()
-    if not endpoint:
-        return []
-
-    payload = safe_get_json(endpoint, params={"topic": topic})
-    if not isinstance(payload, dict):
-        return []
-    values = payload.get("datasets")
-    if not isinstance(values, list):
-        return []
-    return [str(item).strip() for item in values if str(item).strip()]
 
 
 def parse_manual_dataset_titles(text_block: str) -> list[str]:
@@ -728,15 +706,7 @@ def score_candidate_with_weights(
     return round(score, 2)
 
 
-def select_common_ai_titles(gemini_titles: list[str], kimi_titles: list[str], max_items: int = 5) -> list[str]:
-    kimi_set = {normalize_text(title) for title in kimi_titles}
-    common: list[str] = []
-    for title in gemini_titles:
-        if normalize_text(title) in kimi_set:
-            common.append(title)
-        if len(common) >= max_items:
-            break
-    return common
+
 
 
 def pin_candidates_by_titles(candidates: list[DatasetCandidate], pinned_titles: list[str]) -> list[DatasetCandidate]:
