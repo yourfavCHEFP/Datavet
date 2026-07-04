@@ -679,6 +679,28 @@ def provider_tianchi(topic: str, limit: int) -> list[DatasetCandidate]:
     return results
 
 
+def fetch_external_ai_recommendations(provider_name: str, topic: str) -> list[str]:
+    secrets_key = f"{provider_name.lower()}_proxy"
+    env_key = f"DATAVET_{provider_name.upper()}_PROXY"
+    endpoint = ""
+
+    try:
+        endpoint = str(st.secrets.get(secrets_key, ""))
+    except Exception:
+        endpoint = ""
+
+    endpoint = endpoint or os.environ.get(env_key, "")
+    endpoint = endpoint.strip()
+    if not endpoint:
+        return []
+
+    payload = safe_get_json(endpoint, params={"topic": topic})
+    if not isinstance(payload, dict):
+        return []
+    values = payload.get("datasets")
+    if not isinstance(values, list):
+        return []
+    return [str(item).strip() for item in values if str(item).strip()]
 
 
 def parse_manual_dataset_titles(text_block: str) -> list[str]:
@@ -704,7 +726,6 @@ def score_candidate_with_weights(
         + ranking_weights["task"] * task_factor
     )
     return round(score, 2)
-
 
 
 
@@ -1602,23 +1623,6 @@ def main() -> None:
             "task": task_w,
         }
 
-        st.write("Gemini/Kimi baseline pinning lets you force common recommendations into the first 5 results.")
-        use_auto_baseline = st.checkbox("Use Gemini/Kimi proxy endpoints (if configured)", value=False)
-        baseline_col1, baseline_col2 = st.columns(2)
-        gemini_manual_text = baseline_col1.text_area(
-            "Gemini dataset titles (one per line)",
-            height=110,
-            placeholder="Dataset A\nDataset B\nDataset C",
-        )
-        kimi_manual_text = baseline_col2.text_area(
-            "Kimi dataset titles (one per line)",
-            height=110,
-            placeholder="Dataset A\nDataset X\nDataset C",
-        )
-
-        st.caption(
-            "For strict top-5 alignment: provide or fetch both lists. The app pins common titles from Gemini and Kimi into the first five slots."
-        )
 
     with st.container(border=True):
         topic_col, task_col, count_col, button_col = st.columns([2.0, 1.2, 0.9, 0.8])
@@ -1634,42 +1638,6 @@ def main() -> None:
     if predicted_expansions:
         st.caption("Semantic expansion terms: " + ", ".join(predicted_expansions[:6]))
 
-    if search_now:
-        if not topic.strip():
-            st.warning("Enter a topic before searching.")
-        else:
-            gemini_titles = parse_manual_dataset_titles(gemini_manual_text)
-            kimi_titles = parse_manual_dataset_titles(kimi_manual_text)
-            if use_auto_baseline:
-                gemini_titles = gemini_titles or fetch_external_ai_recommendations("gemini", topic)
-                kimi_titles = kimi_titles or fetch_external_ai_recommendations("kimi", topic)
-
-            common_ai_titles = select_common_ai_titles(gemini_titles, kimi_titles, max_items=5)
-
-            with st.spinner("Investigating datasets across connected sources..."):
-                datasets, source_messages = aggregate_datasets(
-                    topic,
-                    target_count,
-                    selected_task_type,
-                    ranking_weights=st.session_state["ranking_weights"],
-                    pinned_titles=common_ai_titles,
-                )
-
-            st.session_state.datasets = datasets
-            st.session_state.source_messages = source_messages
-            st.session_state.recommended_index = 0 if datasets else None
-            st.session_state.selected_dataset = datasets[0].to_dict() if datasets else None
-            st.session_state.expanded_terms = predicted_expansions
-
-            if common_ai_titles:
-                st.success(
-                    "Top-5 baseline pinning applied using common Gemini/Kimi titles: "
-                    + ", ".join(common_ai_titles[:5])
-                )
-            else:
-                st.info(
-                    "No common Gemini/Kimi baseline titles were available. Ranking is using the configured scoring weights."
-                )
 
     if st.session_state.source_messages:
         st.subheader("Discovery Status")
