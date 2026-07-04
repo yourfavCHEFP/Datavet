@@ -678,31 +678,6 @@ def provider_tianchi(topic: str, limit: int) -> list[DatasetCandidate]:
             break
     return results
 
-
-def fetch_external_ai_recommendations(provider_name: str, topic: str) -> list[str]:
-    secrets_key = f"{provider_name.lower()}_proxy"
-    env_key = f"DATAVET_{provider_name.upper()}_PROXY"
-    endpoint = ""
-
-    try:
-        endpoint = str(st.secrets.get(secrets_key, ""))
-    except Exception:
-        endpoint = ""
-
-    endpoint = endpoint or os.environ.get(env_key, "")
-    endpoint = endpoint.strip()
-    if not endpoint:
-        return []
-
-    payload = safe_get_json(endpoint, params={"topic": topic})
-    if not isinstance(payload, dict):
-        return []
-    values = payload.get("datasets")
-    if not isinstance(values, list):
-        return []
-    return [str(item).strip() for item in values if str(item).strip()]
-
-
 def parse_manual_dataset_titles(text_block: str) -> list[str]:
     lines = [line.strip() for line in text_block.splitlines()]
     return [line for line in lines if line]
@@ -726,27 +701,6 @@ def score_candidate_with_weights(
         + ranking_weights["task"] * task_factor
     )
     return round(score, 2)
-
-
-
-
-def pin_candidates_by_titles(candidates: list[DatasetCandidate], pinned_titles: list[str]) -> list[DatasetCandidate]:
-    if not pinned_titles:
-        return candidates
-
-    title_map = {normalize_text(title): title for title in pinned_titles}
-    pinned: list[DatasetCandidate] = []
-    rest: list[DatasetCandidate] = []
-
-    for candidate in candidates:
-        key = normalize_text(candidate.title)
-        if key in title_map and len(pinned) < 5:
-            pinned.append(candidate)
-        else:
-            rest.append(candidate)
-
-    return pinned + rest
-
 
 def provider_huggingface(topic: str, limit: int) -> list[DatasetCandidate]:
     url = "https://huggingface.co/api/datasets"
@@ -939,13 +893,9 @@ def aggregate_datasets(
     target_count: int,
     task_type: str = "Auto",
     ranking_weights: dict[str, float] | None = None,
-    pinned_titles: list[str] | None = None,
 ) -> tuple[list[DatasetCandidate], list[str]]:
     if ranking_weights is None:
         ranking_weights = DEFAULT_RANKING_WEIGHTS.copy()
-    if pinned_titles is None:
-        pinned_titles = []
-
     expanded_terms = expand_topic_semantically(topic)
     search_terms = [topic] + expanded_terms[:2]
     per_source = max(4, target_count // 4)
@@ -1006,11 +956,6 @@ def aggregate_datasets(
         deduped.append(candidate)
         if len(deduped) >= target_count:
             break
-
-    if pinned_titles:
-        deduped = pin_candidates_by_titles(deduped, pinned_titles)
-        source_messages.append(f"Pinned external AI baseline titles into top results: {len(pinned_titles[:5])}")
-
     return deduped, source_messages
 
 
@@ -1638,6 +1583,23 @@ def main() -> None:
     if predicted_expansions:
         st.caption("Semantic expansion terms: " + ", ".join(predicted_expansions[:6]))
 
+    if search_now:
+        if not topic.strip():
+            st.warning("Enter a topic before searching.")
+        else:
+            with st.spinner("Investigating datasets across connected sources..."):
+               datasets, source_messages = aggregate_datasets(
+                topic,
+                target_count,
+                selected_task_type,
+                ranking_weights=st.session_state["ranking_weights"],
+            )
+
+            st.session_state.datasets = datasets
+            st.session_state.source_messages = source_messages
+            st.session_state.recommended_index = 0 if datasets else None
+            st.session_state.selected_dataset = datasets[0].to_dict() if datasets else None
+            st.session_state.expanded_terms = predicted_expansions
 
     if st.session_state.source_messages:
         st.subheader("Discovery Status")
